@@ -1,0 +1,696 @@
+---
+title: "Rising Firearm Violence in Toronto: Temporal Trends and Neighborhood Hotspots (2004–2024)"
+subtitle: "Exploring Two Decades of Data to Uncover Patterns, Predict Future Incidents, and Guide Interventions"
+author: "Heyucheng Zhang"
+thanks: "Code and data are available at: https://github.com/heyuchengzhang/Toronto-Shootings-Firearm. Shiny Web App is available at: https://79muet-heyucheng-zhang.shinyapps.io/Toronto-Shootings-Firearm/."
+date: 3 December 2024
+date-format: long
+abstract: "This paper examines firearm violence in Toronto from 2004 to 2024, leveraging two decades of publicly available data to identify temporal trends and neighborhood-specific hotspots. Our analysis reveals a troubling upward trajectory in firearm-related injuries and deaths, with incidents concentrated in high-risk areas like Glenfield-Jane Heights and Black Creek. Using linear regression models, we predict a continued rise in firearm violence if current trends persist, emphasizing the need for targeted interventions. By bridging statistical analysis, geospatial mapping, and predictive modeling, this research provides actionable insights for policymakers, law enforcement, and communities to mitigate the growing impact of gun violence."
+format: pdf
+toc: true
+number-sections: true
+bibliography: references.bib
+---
+
+```{r}
+#| message: false
+#| echo: false
+#| warning: false
+#### Workspace set up ####
+# install.packages("tidyverse")
+# install.packages("knitr")
+# install.packages("here")
+# install.packages("janitor")
+# install.packages("kableExtra")
+# install.packages("arrow")
+# install.packages("sf")
+# install.packages("modelsummary")
+# install.packages("broom")
+
+library(tidyverse) # data-related packages
+library(knitr) # make tables
+library(here) # manage file paths
+library(janitor) # clean data
+library(kableExtra) # table-related packages
+library(arrow) # read data
+library(sf) # read data
+library(modelsummary) # model summary
+library(broom) # convert data
+
+#### Read in cleaned data ####
+cleaned_data <- read_parquet(here("data/02-analysis_data/cleaned_data.parquet"))
+neighbourhood_counts <- read_parquet(here("data/02-analysis_data/neighbourhood_counts.parquet"))
+yearly_counts <- read_parquet(here("data/02-analysis_data/yearly_counts.parquet"))
+monthly_counts <- read_parquet(here("data/02-analysis_data/monthly_counts.parquet"))
+toronto_map <- st_read(here("data/01-raw_data/toronto_map_data.geojson"), quiet = TRUE)
+locations <- st_read(here("data/02-analysis_data/locations.geojson"), quiet = TRUE)
+injury_model <- readRDS(here("models/injury_model.rds"))
+death_model <- readRDS(here("models/death_model.rds"))
+```
+
+# Introduction
+
+In Toronto, firearm violence has steadily increased over the past two decades, significantly affecting neighborhoods and public safety. Between 2004 and 2024, firearm-related injuries and deaths have risen, disrupting lives and presenting ongoing challenges for policymakers and law enforcement. This study analyzes firearm violence in Toronto over this period to identify temporal patterns, highlight neighborhood-specific concentrations, and guide interventions aimed at addressing these issues.
+
+Using detailed data from the Toronto Police Service and statistical and geospatial tools in the R programming environment, this study examines two decades of shooting and firearm discharge data. The analysis identifies upward trends in injuries and deaths, as well as a consistent concentration of incidents in neighborhoods such as Glenfield-Jane Heights and Black Creek. These findings underscore the importance of tailored interventions that address firearm violence at both the city and neighborhood levels.
+
+The estimand in this study is twofold, focusing on two key questions:
+
+1. **Cumulative Neighborhood Impact**: What is the total number of firearm-related incidents within each Toronto neighborhood from 2004 to 2024?
+
+2. **Temporal Trends in Severity**: How have city-wide annual injuries and deaths from firearm incidents changed over time, and what trajectory is projected if current trends continue?  
+
+By focusing on these questions, the study aims to quantify the scope and distribution of firearm violence, providing a foundation for informed decision-making.
+
+Through statistical modeling, geospatial mapping, and trend analysis, this research examines firearm violence in a systematic and actionable manner. It aims to support policymakers, law enforcement, and community stakeholders in developing targeted strategies to reduce firearm violence and its societal impacts.
+
+The paper is organized as follows: Section @sec-data outlines the data sources and methodology employed; Section @sec-mod presents the statistical models and their theoretical underpinnings; Section @sec-res summarizes the results, emphasizing spatial and temporal patterns; Section @sec-dis discusses findings, limitations, and recommendations for future research and policy; and Section @sec-appe provides an appendix addressing observational data, sampling methodologies, and the challenges associated with analyzing crime data. This structure ensures that the findings of this study contribute to efforts to create safer neighborhoods in Toronto.
+
+# Data {#sec-data}
+
+## Methodology
+
+In analyzing firearm violence in Toronto, we utilized the R programming language [@citeR] alongside essential packages from the tidyverse [@tidyverse], including dplyr [@dplyr] and tibble [@tibble], to streamline data manipulation. The janitor package [@janitor] ensured variable names were clean and duplicates were removed. ggplot2 [@ggplot] was employed to create compelling visualizations, and kableExtra [@kableextra] was used to generate formatted tables. The here package [@here] enabled efficient file path management to ensure reproducibility.
+
+Spatial analysis was conducted using the sf package [@sf], integrating geographic data with precision. Data from the Toronto Open Data portal, processed with the opendatatoronto package [@opendatatoronto], provided rich geographic context. Statistical summaries and modeling were facilitated by the modelsummary [@modelsummary] and broom [@broom] packages. The arrow package [@arrow] ensured efficient data import and handling.
+
+## Dataset Sources
+
+### Shooting and Firearm Discharge Data
+
+The Toronto Police Service's Shooting and Firearm Discharge Data [@shootings] contains all reported shooting-related occurrences. It includes incidents where projectiles were discharged from firearms as defined under the Criminal Code of Canada. Notably, the dataset encompasses two categories:
+
+- **Shooting Event/Occurrence**: Incidents where a projectile discharge injured a person, excluding suicides and police-involved discharges.
+
+- **Firearm Discharge**: Incidents involving discharged projectiles without reported injuries, including accidental discharges and celebratory fire.
+
+Each record includes:
+
+- **Spatial Data**: Neighborhood identifiers (`NEIGHBOURHOOD_158`), geographic coordinates (`LONG_WGS84`, `LAT_WGS84`), and offset locations to the nearest intersection for privacy.
+
+- **Temporal Data**: Dates of incidents (`OCC_DATE`).
+
+- **Impact Data**: Severity metrics, including `DEATH` (fatalities) and `INJURIES` (non-fatal injuries).
+
+
+### Neighbourhoods
+
+Toronto’s 158 neighborhoods [@neighbourhoods] serve as the geographic framework for this study. Defined based on Statistics Canada census tracts, these neighborhoods provide a consistent boundary for longitudinal analysis of socio-economic and crime-related data. The stable boundaries ensure comparability over time, making them an invaluable resource for identifying patterns and planning interventions.
+
+Neighborhood profiles enable targeted insights into localized trends of firearm violence, supporting efforts by government and community agencies in service delivery and planning. These profiles offer a socio-economic lens to interpret variations in firearm-related incidents across the city.
+
+## Data Preparation and Selection Justification
+
+The analysis relied on a rigorous data cleaning and preparation process to ensure accuracy and reliability:
+
+1. **Data Cleaning**: Invalid geographic coordinates (e.g., `LONG_WGS84 = 0` or `LAT_WGS84 = 0`) were removed. Neighborhoods identified as ‘NSA’ (Not Specified Area) due to missing spatial data were flagged for exclusion in geospatial analysis.
+
+2. **Variable Selection**: Key variables, including `OCC_DATE`, `NEIGHBOURHOOD_158`, `LONG_WGS84`, `LAT_WGS84`, `INJURIES`, and `DEATH`, were extracted for focused analysis.
+
+3. **Temporal Aggregation**: Data was aggregated monthly and yearly to uncover trends over time.
+
+4. **Spatial Integration**: Neighborhood boundaries were joined with incident data to visualize shooting hotspots and analyze spatial distributions.
+
+
+```{r}
+#| echo: false
+#| label: tbl-cleaned-data
+#| tbl-cap: Sample of Cleaned Data
+
+kable(head(cleaned_data, 10), format = "latex", booktabs = TRUE) |>
+  kable_styling(latex_options = c("striped", "scale_down"), full_width = FALSE)
+
+```
+
+@tbl-cleaned-data provides an overview of the cleaned data used for analysis. The cleaned dataset (`cleaned_data`) forms the basis for statistical and spatial analyses, while aggregated datasets (`yearly_counts`, `monthly_counts`, and `neighbourhood_counts`) provide summaries for trend and neighborhood-specific analyses.
+
+## Measurement
+
+The dataset offers a robust foundation for exploring firearm violence through carefully defined metrics:
+
+1. **Temporal Dimensions**: Shooting dates (`OCC_DATE`) allow for monthly and yearly trend analysis, identifying potential seasonal patterns.
+
+2. **Spatial Dimensions**: Neighborhood identifiers (`NEIGHBOURHOOD_158`) and geographic coordinates (`LONG_WGS84`, `LAT_WGS84`) facilitate the mapping of incidents and identification of hotspots.
+
+3. **Severity Metrics**: Variables like `INJURIES` (non-fatal injuries) and `DEATH` (fatalities) quantify the human impact of firearm violence.
+
+### Challenges in Measurement
+
+Several limitations inherent to the dataset must be acknowledged:
+
+- **Offset Locations**: Incident locations are deliberately shifted to the nearest road intersection for privacy, which may slightly affect spatial accuracy.
+
+- **Legacy Data**: Prior to 2014, limited geographic data results in some neighborhoods being labeled as ‘NSA.’
+
+- **Data Completeness**: Not all incidents may be reported, and those classified as firearm discharges may include non-criminal events (e.g., celebratory fire).
+
+Despite these challenges, the dataset provides a comprehensive view of firearm violence in Toronto, offering the specificity and breadth needed for this analysis. By carefully preparing the data and addressing potential biases, this study ensures robust and reliable insights into the temporal and spatial patterns of shootings across the city.
+
+
+# Model {#sec-mod}
+
+## Model Set-up
+
+Through our analysis of firearm-related incidents in Toronto, we identified a significant relationship between time and the number of shootings, injuries, and deaths. To explore these relationships and forecast future trends, we constructed two linear regression models: one to predict injuries (`INJURIES`) and another to predict deaths (`DEATH`) over time.
+
+We formalize the models as follows:
+
+### Injury Model
+
+```{=tex}
+\begin{equation}
+Y^{(I)}_{i} = \beta^{(I)}_{0} + \beta^{(I)}_{1} Time\_Index_{i}
+\label{eq:injury-model}
+\end{equation}
+```
+
+### Death Model
+
+```{=tex}
+\begin{equation}
+Y^{(D)}_{i} = \beta^{(D)}_{0} + \beta^{(D)}_{1} Time\_Index_{i}
+\label{eq:death-model}
+\end{equation}
+```
+
+Where:
+
+-   $Y^{(I)}_{i}$ represents the number of injuries at time index $i$ in the injury model (Equation \ref{eq:injury-model}).
+-   $Y^{(D)}_{i}$ represents the number of deaths at time index $i$ in the death model (Equation \ref{eq:death-model}).
+-   $\beta^{(I)}_{0}$ and $\beta^{(D)}_{0}$ are the intercepts, indicating the estimated number of injuries and deaths, respectively, at the starting point of the time index.
+-   $\beta^{(I)}_{1}$ and $\beta^{(D)}_{1}$ are the coefficients for the time index, capturing the rate of change in injuries and deaths over time.
+-   `Time_Index` is the numerical representation of time, enabling us to examine temporal trends.
+
+The dependent variables (`INJURIES` and `DEATH`) represent the severity of incidents, while the independent variable (`Time_Index`) provides a chronological structure to detect trends and predict future values.
+
+
+### Model Justification
+
+Linear regression was chosen for its simplicity, interpretability, and effectiveness in analyzing trends over time. Preliminary analysis indicated a linear trend in the data, supporting the use of this model. The decision to use two separate models for injuries and deaths reflects the differing dynamics and factors influencing these outcomes, ensuring a more tailored and accurate analysis.
+
+Key justifications for the model include:
+
+1. **Interpretability**: Linear regression provides clear coefficients that quantify the relationship between time and firearm-related outcomes.
+
+2. **Flexibility**: The models allow for easy extension, such as adding covariates (e.g., neighborhood effects) in future analyses.
+
+3. **Initial Simplicity**: As a foundational analysis, linear regression avoids overfitting and serves as a baseline for comparison with more complex models.
+
+Assumptions underlying the models include:
+
+- Linearity: A linear relationship exists between `Time_Index` and the dependent variables.
+
+- Homoscedasticity: The variance of residuals is constant across time.
+
+- Independence: Observations are independent of one another.
+
+- Normality: Residuals are normally distributed.
+
+These assumptions were validated through diagnostic plots, including residual-vs-fitted and Q-Q plots. Limitations, such as the exclusion of external factors like policy changes or socio-economic conditions, are acknowledged and discussed in the paper's conclusion.
+
+
+## Model Prediction
+
+After validating the models, we extended the `Time_Index` beyond the current dataset to forecast injuries and deaths for the next 12 months. This predictive exercise provides critical insights into future firearm violence trends and guides proactive measures for public safety.
+
+Using the established models:
+
+### Injury Prediction
+
+```{=tex}
+\begin{equation}
+\hat{Y}^{(I)}_{i} = \beta^{(I)}_{0} + \beta^{(I)}_{1} Time\_Index_{i}
+\label{eq:injury-prediction}
+\end{equation}
+```
+
+### Death Prediction
+
+```{=tex}
+\begin{equation}
+\hat{Y}^{(D)}_{i} = \beta^{(D)}_{0} + \beta^{(D)}_{1} Time\_Index_{i}
+\label{eq:death-prediction}
+\end{equation}
+```
+
+The predictions (Equation \ref{eq:injury-prediction} & Equation \ref{eq:death-prediction} ) were calculated for a `Time_Index` incremented by 12 months, representing the forecast horizon.
+
+
+### Predictive Insights
+
+@fig-injuries_prediction and @fig-death_prediction, juxtaposed against historical data, highlight projected trends in firearm-related injuries and deaths. 
+
+```{r fig.width=6, fig.height=3}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-injuries_prediction
+#| fig-cap: Prediction for Injuries
+# Ensure Time_Index exists
+if (!"Time_Index" %in% colnames(yearly_counts)) {
+  yearly_counts$Time_Index <- seq_len(nrow(yearly_counts)) 
+}
+
+# Generate future time indices
+future_time_index <- data.frame(Time_Index = seq(
+  from = max(yearly_counts$Time_Index) + 1,
+  length.out = 12
+))
+
+# Generate predictions
+injury_predictions <- predict(injury_model, newdata = future_time_index)
+
+
+# Combine observed and predicted data for injuries
+combined_injury <- rbind(
+  data.frame(Time_Index = yearly_counts$Time_Index, Values = yearly_counts$Total_Injuries, Type = "Observed"),
+  data.frame(Time_Index = future_time_index$Time_Index, Values = injury_predictions, Type = "Predicted")
+)
+
+
+# Plot for injuries
+ggplot(combined_injury, aes(x = Time_Index, y = Values, color = Type, group = Type)) +
+  geom_line() +
+  geom_point(data = combined_injury[combined_injury$Type == "Observed", ], shape = 16, size = 2) +
+  labs(x = "Time Index (Year)", y = "Injuries", title = "Predicted and Observed Injuries") +
+  scale_color_manual(values = c("Observed" = "black", "Predicted" = "red")) +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
+```{r fig.width=6, fig.height=3}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-death_prediction
+#| fig-cap: Prediction for Deaths
+# Ensure Time_Index exists
+if (!"Time_Index" %in% colnames(yearly_counts)) {
+  yearly_counts$Time_Index <- seq_len(nrow(yearly_counts)) # Create Time_Index
+}
+
+# Generate future time indices
+future_time_index <- data.frame(Time_Index = seq(
+  from = max(yearly_counts$Time_Index) + 1,
+  length.out = 12
+))
+
+# Generate predictions
+death_predictions <- predict(death_model, newdata = future_time_index)
+
+# Combine observed and predicted data for deaths
+combined_death <- rbind(
+  data.frame(Time_Index = yearly_counts$Time_Index, Values = yearly_counts$Total_Deaths, Type = "Observed"),
+  data.frame(Time_Index = future_time_index$Time_Index, Values = death_predictions, Type = "Predicted")
+)
+
+# Plot for deaths
+ggplot(combined_death, aes(x = Time_Index, y = Values, color = Type, group = Type)) +
+  geom_line() +
+  geom_point(data = combined_death[combined_death$Type == "Observed", ], shape = 16, size = 2) +
+  labs(x = "Time Index (Year)", y = "Deaths", title = "Predicted and Observed Deaths") +
+  scale_color_manual(values = c("Observed" = "black", "Predicted" = "red")) +
+  theme_minimal() +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
+The visualizations demonstrate the models' ability to capture past trends and provide reasonable forecasts. However, caution is warranted, as the models do not account for external factors such as policy changes or significant societal events.
+
+
+### Implications for Policy and Prevention
+
+The predictive models emphasize the need for proactive strategies to mitigate firearm violence. Policymakers and law enforcement can use these insights to:
+- Allocate resources effectively in neighborhoods with projected increases in incidents.
+- Develop targeted interventions for high-risk periods and locations.
+- Monitor trends to assess the effectiveness of implemented strategies.
+
+Future refinements to the models could integrate additional predictors, such as neighborhood socio-economic factors, enforcement activity, and community programs, to enhance predictive accuracy and policy relevance. These iterative improvements will ensure that the models remain robust tools for combating firearm violence and promoting public safety.
+
+
+
+# Results {#sec-res}
+
+Our investigation into firearm-related incidents in Toronto over the past two decades provides valuable insights into the temporal and spatial trends of shootings, injuries, and fatalities. The results are presented through a combination of tables, figures, and statistical analyses to offer a comprehensive understanding of the patterns in firearm violence across the city.
+
+## Neighborhood-Specific Trends
+
+@tbl-neighbourhood_counts highlights the disparities in firearm-related incidents across Toronto’s neighborhoods, showcasing the top 10 neighborhoods with the highest recorded counts. Among these, Glenfield-Jane Heights and Black Creek consistently emerge as hotspots for firearm violence. These areas demonstrate significantly higher incident rates compared to other neighborhoods, suggesting the presence of underlying socio-economic, geographic, and systemic factors contributing to these patterns.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: tbl-neighbourhood_counts
+#| tbl-cap: Sample of Neighborhood Counts of Firearm-Related Incidents
+
+kable(head(neighbourhood_counts, 10), format = "latex", booktabs = TRUE, align = "c") |>
+  kable_styling(latex_options = c("striped", "scale_down"), full_width = FALSE, font_size = 8)
+```
+
+In @fig-neighbourhood, we visualize the top 10 neighborhoods with the highest counts of firearm-related incidents. These results suggest focused community safety initiatives and law enforcement presence in these areas could mitigate the risk of further incidents.
+
+```{r fig.width=10, fig.height=5}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-neighbourhood
+#| fig-cap: Top 10 Toronto Neighborhoods with the Highest Firearm-Related Incidents
+ggplot(head(neighbourhood_counts, 10), aes(x = reorder(NEIGHBOURHOOD_158, Total_Shootings), y = Total_Shootings, fill = Total_Shootings)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient(low = "#FFB6C1", high = "#8B0000") +
+  theme_minimal() +
+  labs(title = "Top 10 Neighborhoods with the Highest Firearm-Related Incidents",
+       x = "Neighborhood",
+       y = "Total Deaths",
+       caption = "Source: Open Data Toronto") +
+  coord_flip()
+```
+
+Law enforcement can focus on high-risk neighborhoods by increasing patrols, leveraging community policing, and using data-driven allocation of resources to deter firearm violence effectively. Initiatives such as youth engagement programs, job creation schemes, and mental health support in these neighborhoods can address root causes of violence and foster safer communities. By integrating these findings into a comprehensive strategy, policymakers and stakeholders can work toward reducing firearm-related violence in Toronto’s most affected neighborhoods, improving the safety and well-being of its residents.
+
+## Annual Trends in Shootings, Injuries, and Deaths
+
+@tbl-yearly_counts summarizes the yearly progression of shootings, injuries, and deaths in Toronto from 2004 to 2024. A clear upward trend in injuries and deaths highlights the increasing severity of firearm violence over time.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: tbl-yearly_counts
+#| tbl-cap: Yearly Counts of Firearm-Related Incidents, Injuries, and Deaths
+
+kable(yearly_counts, format = "latex", booktabs = TRUE, align = "c") |>
+  kable_styling(latex_options = c("striped", "scale_down"), full_width = FALSE, font_size = 8)
+```
+
+
+In @fig-yearly_trends, we visualize the annual counts of shootings, injuries, and deaths. The steady rise in injuries and deaths necessitates policy attention and proactive measures.
+
+
+```{r fig.width=10, fig.height=5}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-yearly_trends
+#| fig-cap: Annual Trends in Shootings, Injuries, and Deaths
+
+ggplot(yearly_counts, aes(x = OCC_YEAR)) +
+  geom_line(aes(y = Total_Shootings, color = "Shootings"), size = 1) +
+  geom_line(aes(y = Total_Injuries, color = "Injuries"), size = 1) +
+  geom_line(aes(y = Total_Deaths, color = "Deaths"), size = 1) +
+  labs(title = "Annual Trends in Shootings, Injuries, and Deaths in Toronto",
+       x = "Year",
+       y = "Counts",
+       color = "Legend",
+       caption = "Source: Open Data Toronto") +
+  theme_minimal() +
+  theme(legend.position = "top") +
+  scale_color_manual(values = c("Shootings" = "blue", "Injuries" = "orange", "Deaths" = "red"))
+```
+
+## Geospatial Analysis
+
+The spatial distribution of firearm-related incidents is shown in @fig-firearm_map, where neighborhoods with high concentrations of shootings are highlighted. This geospatial analysis provides a clear picture of the areas most affected by firearm violence.
+
+```{r fig.width=12, fig.height=6}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-firearm_map
+#| fig-cap: Toronto Firearm-Related Incident Locations
+
+ggplot() +
+  geom_sf(data = toronto_map, fill = "#D3D3D3", color = "black") +
+  geom_sf(data = locations, color = "red", size = 0.5, alpha = 0.6) +
+  labs(title = "Geospatial Distribution of Firearm-Related Incidents in Toronto",
+       x = "Longitude",
+       y = "Latitude",
+       caption = "Source: Open Data Toronto") +
+  theme_minimal()
+```
+
+Neighborhoods such as Glenfield-Jane Heights, Black Creek, and Mount Olive-Silverstone-Jamestown exhibit consistently high densities of firearm-related incidents. These areas emerge as critical hotspots requiring immediate attention. The map reveals clusters of high-density firearm violence, particularly in the northwest and downtown areas of Toronto. This clustering underscores the non-random nature of firearm violence and suggests the influence of localized socio-economic or environmental factors. The geospatial analysis enables policymakers to allocate law enforcement and community resources more effectively by focusing on neighborhoods with the highest densities of firearm incidents.
+
+## Shiny Web App: Toronto Shooting Incidents Explorer
+
+Shiny Web App is available at: [Toronto Shooting Incidents Explorer](https://79muet-heyucheng-zhang.shinyapps.io/Toronto-Shootings-Firearm/)
+
+To enhance public accessibility and engagement with our analysis, we developed a Shiny web application. This tool allows users to dynamically explore firearm violence data in Toronto from 2004 to 2024, offering an interactive platform to investigate trends and hotspots. The app features two main functionalities:
+
+- **Table View**: Users can select specific years or view aggregated data for all years. The table provides detailed attributes such as the date, neighborhood, and type of incident (injury or fatality). This view enables users to examine the granular details of each firearm-related occurrence.
+  
+- **Map View**: Using Leaflet[@leaflet], the app displays the geographic distribution of firearm incidents. Each marker corresponds to an incident, plotted based on its longitude and latitude. Users can zoom in on specific neighborhoods to identify high-risk zones, helping to visualize the spatial concentration of firearm violence.
+
+This Shiny application bridges the gap between data and actionable insights by providing a hands-on tool for researchers, policymakers, and the public. It empowers users to interact with the dataset, fostering a deeper understanding of the temporal and spatial dynamics of firearm violence in Toronto. By offering a user-friendly interface, the app encourages data-driven discussions and strategies for crime prevention.
+
+
+## Model Summary and 90% Credibility Interval
+
+@fig-linear-regression encapsulates the results of our linear regression models, displaying the correlation between time and the number of firearm-related injuries and deaths. These models effectively capture temporal trends, providing a foundation for forecasting and policymaking.
+
+
+```{r fig.width=10, fig.height=5}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-linear-regression
+#| fig-cap: Linear Regression of Firearm-Related Incidents
+
+# Generate augmented data
+augmented_injury <- augment(injury_model, yearly_counts)
+augmented_death <- augment(death_model, yearly_counts)
+
+# Plot Injuries Model
+ggplot(augmented_injury, aes(x = Time_Index, y = Total_Injuries)) +
+  geom_point(aes(color = "Data Points"), size = 3, alpha = 0.6) +
+  geom_line(aes(y = .fitted, color = "Fitted Line"), size = 1.2) +
+  labs(title = "Linear Regression of Firearm-Related Injuries",
+       subtitle = "Observed injuries and model predictions over time",
+       x = "Time Index (Years)",
+       y = "Number of Injuries",
+       color = "Legend") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(face = "bold"),
+        plot.subtitle = element_text(face = "italic")) +
+  scale_color_manual(values = c("Data Points" = "blue", "Fitted Line" = "red"))
+```
+
+
+In addition to the visualizations, @tbl-model_results summarizes the regression coefficients, indicating the intercepts and slopes for injuries and deaths. These models provide critical insights into the upward trends in firearm-related violence.
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: tbl-model_results
+#| tbl-cap: Regression Model Results for Firearm-Related Injuries and Deaths
+
+modelsummary::modelsummary(
+  list(
+    "Injury Model" = injury_model,
+    "Death Model" = death_model
+  ),
+  fmt = 2
+)
+```
+
+
+@fig-interval1  and @fig-interval2 display the 90% credibility intervals for the coefficients. This visualization underscores the reliability of the estimates and their applicability for future predictions.
+
+
+```{r fig.width=6, fig.height=2}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-interval1
+#| fig-cap: 90% Credibility Interval for Injury Model
+
+modelplot(injury_model, conf_level = 0.9) +
+  labs(title = "90% Credibility Interval for Injury Model Coefficients",
+       x = "Coefficient Estimate") +
+  theme_minimal()
+
+```
+
+```{r fig.width=6, fig.height=2}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-interval2
+#| fig-cap: 90% Credibility Interval for Death Model
+
+modelplot(death_model, conf_level = 0.9) +
+  labs(title = "90% Credibility Interval for Death Model Coefficients",
+       x = "Coefficient Estimate") +
+  theme_minimal()
+
+```
+
+Together, the regression models, credibility intervals, and visualizations provide a robust framework for understanding and anticipating trends in firearm violence. These insights serve as a valuable tool for policymakers and stakeholders, guiding data-driven strategies for reducing injuries and deaths in Toronto.
+
+# Discussion {#sec-dis}
+
+## Seasonal patterns in Firearm Violence
+
+Our study highlights a concerning seasonal pattern in firearm-related incidents in Toronto, with a noticeable surge during the summer months compared to the winter. To delve deeper, @fig-year2223, labeled "Monthly Firearm-Related Incidents in 2022 and 2023," focuses on the monthly distribution of these incidents. This detailed visualization reveals that the summer months consistently exhibit higher incident counts.
+
+```{r fig.width=10, fig.height=5}
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-year2223
+#| fig-cap: Monthly Firearm-Related Incidents in 2022 and 2023
+
+year2223_monthly_counts <- monthly_counts |>
+  filter(OCC_YEAR %in% c(2022, 2023)) |>
+  mutate(
+    Month = factor(OCC_MONTH, levels = month.name)
+  )
+
+ggplot(year2223_monthly_counts, aes(x = Month, y = Total_Shootings, group = OCC_YEAR, color = as.factor(OCC_YEAR))) +
+  geom_line(size = 1) +
+  geom_point(size = 3, shape = 21, fill = "white") +
+  facet_wrap(~ OCC_YEAR, scales = "free_x") +
+  scale_color_manual(values = c("2022" = "blue", "2023" = "red"), name = "Year") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        panel.grid.major = element_line(color = "gray85", size = 0.5),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text = element_text(size = 16, face = "bold")) +
+  labs(title = "Monthly Firearm-Related Incidents in 2022 and 2023",
+       subtitle = "Comparative monthly counts of incidents in 2022 and 2023.",
+       x = "Month",
+       y = "Number of Incidents",
+       caption = "Source: Open Data Toronto")
+
+```
+
+This trend underscores the critical need for targeted interventions during the summer months to address the seasonal spike in firearm violence. The visualization highlights the importance of proactive measures and evidence-based policies tailored to address the underlying factors contributing to this seasonal variation in firearm violence.
+
+## Spatial Dynamics and Hotspot Analysis
+
+Our spatial analysis reveals that firearm violence is not randomly distributed across Toronto but is concentrated in specific neighborhoods. Hotspots such as Glenfield-Jane Heights and Black Creek emerge as epicenters of firearm violence. These areas exhibit persistently high incident counts, signaling the need for focused law enforcement efforts and community interventions.
+
+The geospatial distribution of incidents, visualized in @fig-firearm_map, reinforces the critical role of place-based strategies in addressing urban crime. Factors such as population density, socio-economic conditions, and urban design may contribute to the clustering of firearm violence, necessitating localized and multi-faceted responses.
+
+## Predictive Insights and Future Trends
+
+Our linear regression models provide a robust framework for understanding the temporal trends in firearm-related injuries and deaths. The upward trajectory in these metrics, if unaddressed, suggests a continued escalation in firearm violence. The predictive models underscore the importance of proactive strategies, enabling policymakers to allocate resources effectively and develop targeted interventions.
+
+While the models demonstrate strong predictive capabilities, they do not account for external variables such as economic conditions, changes in policing strategies, or broader societal shifts. Incorporating these factors in future models could enhance predictive accuracy and provide a more comprehensive understanding of the drivers of firearm violence.
+
+## Limitations and Weaknesses
+
+Despite the strengths of our study, certain limitations warrant acknowledgment:
+
+- **Data Completeness**: Our reliance on officially reported data excludes unreported incidents, potentially underestimating the true scale of firearm violence.
+
+- **Geographic Privacy Measures**: The offsetting of incident locations for privacy reasons may affect the spatial accuracy of our analyses.
+
+- **Model Constraints**: While the linear models effectively capture temporal trends, they lack the granularity to incorporate additional covariates such as socio-economic indicators or enforcement activities.
+
+These limitations highlight the need for ongoing data collection and the integration of more diverse datasets to enhance the robustness of future analyses.
+
+## Future Exploration and Recommendations
+
+Building on the current study, future research should aim to:
+
+1. **Incorporate Additional Variables**: Expanding the scope of the analysis to include socio-economic factors, policing strategies, and community programs will provide a more nuanced understanding of firearm violence.
+
+2. **Explore Causal Relationships**: Moving beyond correlation, future studies could investigate causal links between economic conditions, urban design, and firearm violence.
+
+3. **Develop Advanced Predictive Models**: Integrating machine learning techniques could enhance the predictive capabilities of models, accommodating non-linear relationships and a broader range of predictors.
+
+These avenues of exploration will not only deepen our understanding of firearm violence but also inform the development of targeted, data-driven strategies to enhance public safety.
+
+
+# Appendix: Surveys, Sampling, and Observational Data {#sec-appe}
+
+## Overview of Observational Data in Crime Analysis
+
+The study of firearm-related violence relies heavily on observational data collected through official reporting mechanisms such as police records, community surveys, and open data platforms. Observational data, unlike experimental data, is inherently non-random and reflects the real-world phenomena being studied. This appendix explores the role of observational data in understanding firearm violence trends, the sampling methodologies used, and the limitations and biases inherent in such data. Additionally, it discusses potential remedies to improve data reliability and applicability for policy-making.
+
+
+## Source of Observational Data
+
+In this study, the primary observational dataset is the Toronto Police Service's Shooting and Firearm Discharge Data. This dataset includes all reported incidents involving firearm discharges, whether resulting in injuries, fatalities, or no physical harm. Each incident is recorded with the following attributes:
+
+- **Temporal Variables**: Incident dates allow for the analysis of monthly and yearly trends.
+
+- **Spatial Variables**: Geographical coordinates and neighborhood identifiers provide insights into the spatial distribution of firearm incidents.
+
+- **Severity Variables**: Metrics such as injuries and deaths quantify the human impact of each incident.
+
+The dataset was supplemented with neighborhood profiles from the City of Toronto, enabling the integration of socio-economic and demographic variables to contextualize the spatial patterns observed.
+
+
+## Sampling Design and Representativeness
+
+The observational data used in this study is collected through a passive reporting system where police records serve as the primary source of information. The dataset represents a form of convenience sampling, as it only includes incidents reported to or recorded by law enforcement. This sampling method has several implications:
+
+1. **Non-Random Nature of Data**: 
+   The dataset does not represent a random sample of all firearm-related incidents in Toronto. Factors such as neighborhood-level trust in law enforcement, the visibility of incidents, and individual reporting behavior can influence the likelihood of an incident being recorded.
+
+2. **Underreporting Bias**:
+   Certain firearm-related incidents, particularly those involving no injuries or fatalities, may go unreported. This introduces an underreporting bias, leading to an underestimation of the true prevalence of firearm violence.
+
+3. **Geographic Bias**:
+   Data completeness may vary by neighborhood. Areas with higher police presence or community surveillance may exhibit higher reporting rates, skewing spatial analyses.
+
+4. **Temporal Consistency**:
+   Reporting practices may have evolved over the two decades covered by this study. Changes in data collection protocols or public awareness campaigns could influence the comparability of data across years.
+
+
+## Statistical Challenges in Observational Data Analysis
+
+1. **Confounding Variables**:
+   Observational data is subject to confounding, where variables not included in the dataset may influence the observed relationships. For example, socio-economic factors, changes in law enforcement strategies, or policy interventions could affect both firearm violence rates and reporting behaviors.
+
+2. **Simpson’s Paradox**:
+   Aggregating data without accounting for neighborhood-level differences or temporal trends may lead to misleading conclusions. For example, an overall decrease in firearm violence may mask increasing trends in specific neighborhoods.
+
+3. **Spatial Autocorrelation**:
+   Firearm incidents are likely spatially correlated, with neighboring areas experiencing similar levels of violence due to shared socio-economic and environmental factors. Ignoring spatial dependence in statistical models can lead to biased estimates and invalid inference.
+
+
+## Simulation Study: The Impact of Underreporting
+
+To assess the potential impact of underreporting bias, a simulation was conducted. The true incident count in each neighborhood was assumed to follow a Poisson distribution with a mean based on observed counts. Underreporting was simulated by randomly excluding 20-50% of incidents, reflecting varying levels of trust in law enforcement across neighborhoods. The results indicated that:
+
+- High levels of underreporting led to significant underestimation of incident rates in marginalized neighborhoods.
+
+- The spatial distribution of incidents appeared more concentrated in well-surveyed neighborhoods, masking true hotspots in underreported areas.
+
+- Temporal trends were relatively robust to underreporting but showed greater variability in neighborhoods with low reporting rates.
+
+
+## Improving Observational Data for Crime Analysis
+
+1. **Incorporating Survey Data**:
+   Supplementing police records with community surveys can provide insights into unreported incidents and public perceptions of firearm violence. Randomized household surveys could help estimate the true prevalence of firearm-related incidents.
+
+2. **Improving Spatial Precision**:
+   While privacy concerns necessitate offsetting geographic coordinates, the use of aggregated spatial units (e.g., census tracts) with socio-economic data can enhance analysis without compromising confidentiality.
+
+3. **Adjusting for Underreporting**:
+   Statistical techniques such as capture-recapture methods or Bayesian hierarchical models can adjust for underreporting by incorporating external information on reporting behaviors.
+
+4. **Enhancing Data Transparency**:
+   Open data platforms should provide metadata detailing changes in reporting practices, data collection methods, and potential biases to improve interpretability and reproducibility.
+
+
+# References
+
+
+
+
