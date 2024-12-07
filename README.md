@@ -2,7 +2,7 @@
 
 ## Overview
 
-This paper examines firearm violence in Toronto from 2004 to 2024, leveraging two decades of publicly available data to identify temporal trends and neighborhood-specific hotspots. Our analysis reveals a troubling upward trajectory in firearm-related injuries and deaths, with incidents concentrated in high-risk areas like Glenfield-Jane Heights and Black Creek. Using linear regression models, we predict a continued rise in firearm violence if current trends persist, emphasizing the need for targeted interventions. By bridging statistical analysis, geospatial mapping, and predictive modeling, this research provides actionable insights for policymakers, law enforcement, and communities to mitigate the growing impact of gun violence.
+This paper examines firearm violence in Toronto from 2004 to 2024 using Open Data Toronto to understand its temporal and geographic patterns. Findings show an upward trend in firearm-related injuries and deaths, with incidents disproportionately concentrated in neighborhoods such as Glenfield-Jane Heights and Black Creek. Linear regression models predict continued increases if patterns persist, highlighting seasonal peaks during summer months. These results aim to guide policy and community efforts to address firearm violence through localized interventions and resource allocation.
 
 ## File Structure
 
